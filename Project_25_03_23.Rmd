@@ -1,0 +1,427 @@
+
+
+```{r}
+library(Seurat)
+library(ggplot2)
+library(cowplot)
+library(scCustomize)
+library(patchwork)
+library(dplyr)
+library(tibble)
+library(metap)
+```
+
+```{r}
+rat2_tiling_path <- "C:/Users/Amit/RProjects/project/project course/2/raw_feature_bc_matrix/"
+rat4_tiling_path <- "C:/Users/Amit/RProjects/project/project course/4/raw_feature_bc_matrix/"
+rat5_tiling_path <- "C:/Users/Amit/RProjects/project/project course/5/raw_feature_bc_matrix/"
+
+```
+
+```{r}
+rat2 <- Read10X(data.dir = rat2_tiling_path)
+rat4 <- Read10X(data.dir = rat4_tiling_path)
+rat5 <- Read10X(data.dir = rat5_tiling_path)
+sor2 <- CreateSeuratObject(counts = rat2, min.cells = 3, min.features = 200)
+sor4 <- CreateSeuratObject(counts = rat4, min.cells = 3, min.features = 200)
+sor5 <- CreateSeuratObject(counts = rat5, min.cells = 3, min.features = 200)
+```
+
+```{r}
+sor2$sample <- "Lactone"
+sor4$sample <- "Control"
+sor5$sample <- "Saline"
+
+cells.combined <- merge(sor2, y = c(sor4,sor5), add.cell.ids = c("Lactone", "Control", "Saline"), merge.data = TRUE)
+
+DefaultAssay(cells.combined) <- "RNA"
+
+memory.limit(35000)
+```
+
+
+```{r}
+# split the dataset into a list of two seurat objects (stim and CTRL)
+cell.list <- SplitObject(cells.combined, split.by="sample")
+
+cell.list <- cell.list[c( "Lactone", "Control", "Saline")]
+
+
+```
+
+
+# Normalization
+```{r}
+cell.list <- lapply(X = cell.list, FUN = SCTransform)
+
+```
+ 
+
+
+```{r}
+cell.features <- SelectIntegrationFeatures(object.list = cell.list, nfeatures = 3000)
+
+options(future.globals.maxSize = 8000 * 1024^2)
+```
+
+```{r}
+cell.list <- PrepSCTIntegration(object.list = cell.list, anchor.features = cell.features, verbose = FALSE)
+
+```
+
+```{r}
+cell.anchors <- FindIntegrationAnchors(object.list = cell.list, normalization.method = "SCT", anchor.features = cell.features, verbose = FALSE)
+
+```
+# this command creates an 'integrated' data assay
+```{r}
+cell.integrated <- IntegrateData(anchorset = cell.anchors, normalization.method = "SCT",verbose = FALSE)
+
+```
+
+# run PCA on the data
+```{r}
+cell.integrated <- RunPCA(cell.integrated, features = VariableFeatures(cell.integrated), npcs = 30, verbose=F)
+```
+
+
+```{r}
+ElbowPlot(cell.integrated)
+cell.integrated <- RunUMAP(cell.integrated, reduction = "pca", dims = 1:15)
+cell.integrated <- FindNeighbors(cell.integrated, dims = 1:15)
+cell.integrated <- FindClusters(cell.integrated, resolution = 0.1)  # Change resolution to adjust the number of clusters
+
+
+```
+
+```{r}
+DimPlot(cell.integrated, reduction= "umap", label = TRUE,
+    repel = TRUE)
+DimPlot(cell.integrated, reduction= "umap", group.by = "sample" , label = TRUE,
+    repel = TRUE)
+
+```
+
+```{r}
+cell.integrated.markers <- FindAllMarkers(cell.integrated, only.pos = TRUE, min.pct = 0.1, logfc.threshold = 0.41, grouping.var = "sample")
+```
+
+```{r}
+annotations <- read.csv("C:/Users/Amit/RProjects/project/project course/CVR - Supplementary Table 1.csv", stringsAsFactors = FALSE)
+
+# Extract the gene column from annotations
+gene_column <- unlist(annotations[2:nrow(annotations), 1])
+
+# Add the "protein type" column to cell.integrated.markers
+cell.integrated.markers <- cell.integrated.markers %>%
+  mutate(`protein type` = ifelse(gene %in% gene_column, colnames(annotations)[colnames(annotations) != "gene"], NA)) %>%
+    Add_Pct_Diff()
+
+# The resulting data frame, cell.integrated.markers, will have a new column "protein type" based on the matching gene values in the annotation file
+
+```
+
+```{r}
+p2 <- DimPlot(cell.integrated, reduction = "umap", label = TRUE, repel = TRUE)
+p1 <- DimPlot(cell.integrated, reduction = "umap", group.by = "sample",label = TRUE,
+    repel = TRUE)
+p1
+p2
+```
+
+
+```{r}
+
+#Extract top 5 markers per cluster
+cell.markers1 <- cell.integrated.markers %>% group_by(cluster) %>% top_n(n = 50, wt = avg_log2FC)
+
+cell.markers1
+
+cell.markers1[,6:7]
+```
+
+
+```{r}
+#SMCs (smooth muscle cells): Acta2, Myh11 ,"Smtn" & Cnn1
+
+FeaturePlot(cell.integrated, features = c("Acta2"), min.cutoff = "q9")#Clusters: 0 10 1
+FeaturePlot(cell.integrated, features = c("Myh11"), min.cutoff = "q9")#Clusters: 1 10 0
+FeaturePlot(cell.integrated, features = c("Cnn1"), min.cutoff = "q9")#Clusters: 10 1
+FeaturePlot(cell.integrated, features = c("Smtn"), min.cutoff = "q9")#Clusters: 10 1
+FeaturePlot(cell.integrated, features = c("Tagln"), min.cutoff = "q9")#Clusters: 10 1
+
+
+
+#endothelial cells: Pecam1 & Cdh5 & Emcn
+
+FeaturePlot(cell.integrated, features = c("Pecam1"), min.cutoff = "q9")#Clusters: 4 1 6
+FeaturePlot(cell.integrated, features = c( "Cdh5"), min.cutoff = "q9")#Clusters: 4 1 6
+FeaturePlot(cell.integrated, features = c("Vwf"), min.cutoff = "q9")#Clusters: 4 1
+FeaturePlot(cell.integrated, features = c( "Emcn"), min.cutoff = "q9")#Clusters: 6 4
+FeaturePlot(cell.integrated, features = c( "Angpt2"), min.cutoff = "q9")#Clusters: 6 4
+
+
+#immune cells: Pdpn Cd14 & Ptprc
+
+FeaturePlot(cell.integrated, features = c("Cd14"), min.cutoff = "q9")#Clusters: 3 5
+FeaturePlot(cell.integrated, features = c("Ptprc"), min.cutoff = "q9")#Clusters: 7 5 3
+FeaturePlot(cell.integrated, features = c("Pf4"), min.cutoff = "q9")#Clusters: 
+
+
+#MSC: Dcn & Gpx3(?)
+
+FeaturePlot(cell.integrated, features = c("Dcn"), min.cutoff = "q9")#Clusters: 0 2
+
+
+#Neurons: Plp1(not seen at cluster 9!) Sfrp5(?) Ntm (details in exel)
+
+FeaturePlot(cell.integrated, features = c("Plp1"), min.cutoff = "q9")
+FeaturePlot(cell.integrated, features = c("Ntm"), min.cutoff = "q9")#Clusters: 9
+
+
+###According to the information obtained in the markers, cluster 8 is labeled as genes for enzyme expression.
+
+p2
+
+
+```
+```{r}
+
+Endothelial_Cells <- c("Pecam1", "Cdh5", "Vwf", "Cd34", "Eng", "Tie2", "Vegfr2", "Thbd" , "Angpt2")
+Smooth_Muscle_Cells<- c("Acta2" , "Smtn" , "Cnn1" , "Myocd" , "Myh11" , "Des" , "Cald1" , "Tagln" , "Sm22a")
+Pericytes<- c("Pdgfrb", "Des", "Ng2", "Cspg4", "Acta2", "Nes", "Lgr4", "Pdgfra", "Vim")
+Fibroblasts<- c("Col1a1", "Fn1", "Tgf", "Vim", "Mmp2", "Lox", "Ctgf", "Tnc", "Fap", "Thy1")
+Macrophages<- c("Cd68", "Cd14", "Cd163", "Cd11b", "Hla", "Cd206", "Cd86", "Ccr2", "Il1b", "Tnf")
+
+#FeaturePlot(cell.integrated, features = Macrophages, min.cutoff = "q9")
+
+
+
+```
+
+
+
+```{r}
+
+#VlnPlot(object = cell.integrated, features = c("Rapsn"))
+
+
+# Define the new identities
+new_IDs <- c(
+  "0" = "SMC 1",
+  "1" = "SMC 2",
+  "2" = "Mesenchyme Cells",
+  "3" = "Immune Cells 1",
+  "4" = "Endothelial Cells 1",
+  "5" = "Immune Cells 2",
+  "6" = "Endothelial Cells 2",
+  "7" = "Immune Cells 3",
+  "8" = "Adipocyte Cells",
+  "9" = "Neurons",
+  "10" = "SMC 3"
+)
+
+p2
+
+```
+
+
+
+```{r}
+
+cell.integrated <- Rename_Clusters(seurat_object = cell.integrated, new_IDs)
+
+
+DimPlot(cell.integrated, reduction = "umap", label = TRUE, repel = TRUE)
+```
+
+
+```{r}
+# Read the CSV file
+geneCSV <- read.csv("C:/Users/Amit/RProjects/project/project course/CVR - Supplementary Table 1.csv")
+
+# Create an empty list to store the vectors
+geneVectors <- list()
+
+# Iterate over the columns
+for (col in colnames(geneCSV)) {
+  # Extract the non-empty values under the current column
+  values <- geneCSV[[col]]
+  nonEmptyValues <- values[values != ""]
+  
+  # Remove duplicates from the non-empty values
+  uniqueValues <- unique(nonEmptyValues)
+  
+  # Convert the values to a vector and assign it to the column name
+  geneVectors[[col]] <- as.vector(uniqueValues)
+}
+
+# Access the vectors by column name
+# geneVectors$TF will contain the vector: c("Bhlhe41", "Gbx2", "Zfp420")
+# geneVectors$SNP will contain the vector: c("Bcl7c", "Tmem52", "Mpp6")
+
+```
+
+
+
+  "0" = "SMC 1",
+  "1" = "SMC 2",
+  "2" = "Mesenchyme Cells",
+  "3" = "Immune Cells 1",
+  "4" = "Endothelial Cells 1",
+  "5" = "Immune Cells 2",
+  "6" = "Endothelial Cells 2",
+  "7" = "Immune Cells 3",
+  "8" = "Adipocyte Cells",
+  "9" = "Neurons",
+  "10" = "SMC 3"
+
+Identify differential expressed genes across conditions
+
+```{r}
+theme_set(theme_cowplot())
+
+#"2-Lacton"
+#"4-Control"
+#"5-Saline"
+
+
+chosen_cluster <- "Endothelial Cells 2"
+
+sub_cluster <- subset(cell.integrated, idents = chosen_cluster) 
+sub_cluster <- SetIdent(sub_cluster, value = "sample") 
+
+
+lactone_vs_control_markers <- FindMarkers(sub_cluster, ident.1 = "Lactone" , ident.2 = "Control")
+#write.csv(lactone_vs_control_markers, "C:/Users/Amit/RProjects/project/project course/markers by cluster/\\lactone_vs_control_markers-Endothelial Cells 2.CSV")
+lactone_vs_control_markers <- as.data.frame(lactone_vs_control_markers)
+
+#oooo <- filter(lactone_vs_control_markers, .by = abs(avg_log2FC > 10) & p_val_adj < 0.05)
+#write.csv(lactone_vs_control_markers, "C:/Users/Amit/RProjects/project/project course/combine plots/\\lactone_vs_control_markers-SMC 3 top 10.xlsx")
+
+
+saline_vs_control_markers<- FindMarkers(sub_cluster, ident.1 = "Saline", ident.2 = "Control")
+#write.csv(saline_vs_control_markers, "C:/Users/Amit/RProjects/project/project course/markers by cluster/\\saline_vs_control_markers-Endothelial Cells 2.CSV")
+#saline_vs_control_markers <- as.data.frame(saline_vs_control_markers  %>% top_n(n = 100 , wt = avg_log2FC))
+#write.csv(saline_vs_control_markers, "C:/Users/Amit/RProjects/project/project course\\saline_vs_control_markers-SMC 3 top 10.xlsx")
+
+
+sub_cluster <- NormalizeData(object = sub_cluster, assay = "RNA")
+```
+
+
+
+```{r}
+
+
+avg.sub_cluster <- as.data.frame(log1p(AverageExpression(sub_cluster, verbose = FALSE)$RNA))
+avg.sub_cluster$gene <- rownames(avg.sub_cluster)
+tmp<-merge(avg.sub_cluster,saline_vs_control_markers,by="row.names")
+rownames(tmp)<-tmp$gene
+unn<-merge(saline_vs_control_markers,lactone_vs_control_markers,by="row.names")
+
+
+markers_names_L <- row.names(tmp[tmp$Lactone>1&tmp$Control>1&tmp$p_val_adj<0.05,])
+markers_names_S <- row.names(tmp[tmp$Saline>1&tmp$Control>1&tmp$p_val_adj<0.05,])
+#marks <- c(markers_names_L, markers_names_S)
+#marks <- marks[!duplicated(marks)]
+
+
+#avg.sub_cluster$adj_p_val <- lactone_vs_control_markers[]
+marks_S <- saline_vs_control_markers[abs(saline_vs_control_markers$avg_log2FC > 1) & saline_vs_control_markers$p_val_adj < 0.05,]
+marks_L <- lactone_vs_control_markers[abs(lactone_vs_control_markers$avg_log2FC > 1) & lactone_vs_control_markers$p_val_adj < 0.05,]
+
+
+marks_L <- row.names(marks_L)
+marks_S <- row.names(marks_S)
+
+#finel_mrkrs_EC2 <- c("Faslg")
+
+
+p3 <- ggplot(avg.sub_cluster, aes(Control, Lactone)) + 
+  geom_point(size = 1) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+  ggtitle(chosen_cluster)
+
+p4 <- ggplot(avg.sub_cluster, aes(Control, Saline)) + 
+  geom_point(size = 1) +
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+  ggtitle(chosen_cluster)
+
+p3 <- LabelPoints(plot = p3, points = markers_names_L, col = "red")
+p4 <- LabelPoints(plot = p4, points = markers_names_S, col = "red")
+
+
+p4 + p3
+```
+
+```{r}
+
+# Create the ggplot object for p3
+p3 <- ggplot(avg.sub_cluster, aes(Control, Lactone)) +
+  geom_point(size = 1) +
+  ggtitle(chosen_cluster)
+
+# Calculate the R-squared value for p3
+model_p3 <- lm(Lactone ~ Control, data = avg.sub_cluster)
+r_squared_p3 <- summary(model_p3)$r.squared
+
+# Add the R-squared value to p3
+p3 <- p3 +
+  geom_text(x = max(avg.sub_cluster$Control), y = max(avg.sub_cluster$Lactone),
+            label = paste0("R-squared = ", round(r_squared_p3, 3)),
+            hjust = 1, vjust = 1)
+
+# Create the ggplot object for p4
+p4 <- ggplot(avg.sub_cluster, aes(Control, Saline)) +
+  geom_point(size = 1) +
+  ggtitle(chosen_cluster)
+
+# Calculate the R-squared value for p4
+model_p4 <- lm(Saline ~ Control, data = avg.sub_cluster)
+r_squared_p4 <- summary(model_p4)$r.squared
+
+# Add the R-squared value to p4
+p4 <- p4 +
+  geom_text(x = max(avg.sub_cluster$Control), y = max(avg.sub_cluster$Saline),
+            label = paste0("R-squared = ", round(r_squared_p4, 3)),
+            hjust = 1, vjust = 1)
+
+p4 + p3
+```
+
+Volcano Plot
+```{r}
+
+ggplot(saline_vs_control_markers, aes(x = avg_log2FC, y = -log10(p_val), col = p_val_adj < 0.05 & abs(avg_log2FC) > 1)) +
+  geom_point() +
+  labs(color = "") +
+  scale_x_reverse() +
+  ggtitle("Saline vs Control Markers")
+
+
+
+ggplot(lactone_vs_control_markers, aes(x = avg_log2FC, y = -log10(p_val), col = p_val_adj < 0.05 & abs(avg_log2FC) > 1)) +
+  geom_point() +
+  labs(color = "") +
+  scale_x_reverse() +
+  ggtitle("Lactone vs Control Markers")
+
+
+```
+
+```{r}
+
+
+VlnPlot(sub_cluster ,features = c("Acer2", "Bok", "Ccl21", "Mgll","Lbp", "Cdh5", "Tsc22d1", "Plpp2", "Zswim5" ,"St6galnac3", "Ntn4","Pclo" ,"B4galnt4") , split.by = "sample", combine = FALSE)
+```
+
+```{r}
+#plot<- FeaturePlot(cell.integrated, features = "Pf4")
+#HoverLocator(plot = plot, information = FetchData(cell.integrated, vars = c("ident", "PC_1", "nFeature_RNA")))
+```
+
+
+
+
+
