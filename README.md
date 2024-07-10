@@ -1,4 +1,6 @@
 This project involves the analysis of single-cell RNA sequencing data from three different samples: Lactone, Control, and Saline. The analysis is conducted using the Seurat package in R, which is a popular toolkit for single-cell genomics. The objective is to integrate and compare the data across these samples to identify differentially expressed genes and cluster cells based on their gene expression profiles.
+Feel free to browse the script (Project_25_03_23.Rmd).
+To request the data files and other questions contact me.
 
 ## Data Preprocessing
 
